@@ -47,19 +47,14 @@ object EventEnrichments {
    * @param Optional collectorTstamp
    * @return Validation boxing the result of making the timestamp Redshift-compatible
    */
-  def formatCollectorTstamp(collectorTstamp: Option[DateTime]): Either[FailureDetails.SchemaViolation, String] =
+  def formatCollectorTstamp(collectorTstamp: Option[DateTime]): Either[AtomicError, String] =
     collectorTstamp match {
-      case None =>
-        FailureDetails.SchemaViolation
-          .NotJson("collector_tstamp", None, "not set")
-          .asLeft
+      case None => AtomicError("collector_tstamp", None, "not set").asLeft
       case Some(t) =>
         val formattedTimestamp = toTimestamp(t)
         if (formattedTimestamp.startsWith("-") || t.getYear > 9999 || t.getYear < 0) {
           val msg = s"formatted as $formattedTimestamp is not Redshift-compatible"
-          FailureDetails.SchemaViolation
-            .NotJson("collector_tstamp", t.toString.some, msg)
-            .asLeft
+          AtomicError("collector_tstamp", t.toString.some, msg).asLeft
         } else
           formattedTimestamp.asRight
     }
@@ -110,26 +105,16 @@ object EventEnrichments {
         }
     }
 
-  case class FormatError(
-    field: String,
-    value: Option[String],
-    msg: String
-  )
-
   val extractTimestamp_ef: (String, String) => Either[FailureDetails.EnrichmentFailure, String] =
     (field, tstamp) =>
       extractTimestamp(field, tstamp).leftMap { error =>
         val f = FailureDetails.EnrichmentFailureMessage.InputData(
           error.field,
           error.value,
-          error.msg
+          error.message
         )
         FailureDetails.EnrichmentFailure(None, f)
       }
-
-  val extractTimestamp_sv: (String, String) => Either[FailureDetails.SchemaViolation, String] =
-    (field, tstamp) =>
-      extractTimestamp(field, tstamp).leftMap(error => FailureDetails.SchemaViolation.NotJson(error.field, error.value, error.msg))
 
   /**
    * Extracts the timestamp from the format as laid out in the Tracker Protocol:
@@ -137,13 +122,13 @@ object EventEnrichments {
    * @param tstamp The timestamp as stored in the Tracker Protocol
    * @return a Tuple of two Strings (date and time), or an error message if the format was invalid
    */
-  val extractTimestamp: (String, String) => Either[FormatError, String] =
+  val extractTimestamp: (String, String) => Either[AtomicError, String] =
     (field, tstamp) =>
       try {
         val dt = new DateTime(tstamp.toLong)
         val timestampString = toTimestamp(dt)
         if (timestampString.startsWith("-") || dt.getYear > 9999 || dt.getYear < 0)
-          FormatError(
+          AtomicError(
             field,
             Option(tstamp),
             s"formatting as $timestampString is not Redshift-compatible"
@@ -152,7 +137,7 @@ object EventEnrichments {
           timestampString.asRight
       } catch {
         case _: NumberFormatException =>
-          FormatError(
+          AtomicError(
             field,
             Option(tstamp),
             "not in the expected format: ms since epoch"
@@ -166,7 +151,7 @@ object EventEnrichments {
    * @param eventCode The event code
    * @return the event type, or an error message if not recognised, boxed in a Scalaz Validation
    */
-  val extractEventType: (String, String) => Either[FailureDetails.SchemaViolation, String] =
+  val extractEventType: (String, String) => Either[AtomicError, String] =
     (field, code) =>
       code match {
         case "se" => "struct".asRight
@@ -179,9 +164,7 @@ object EventEnrichments {
         case "pp" => "page_ping".asRight
         case _ =>
           val msg = "not recognized as an event type"
-          FailureDetails.SchemaViolation
-            .NotJson(field, Option(code), msg)
-            .asLeft
+          AtomicError(field, Option(code), msg).asLeft
       }
 
   /**

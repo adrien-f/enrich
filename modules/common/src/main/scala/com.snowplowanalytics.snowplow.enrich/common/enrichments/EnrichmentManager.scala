@@ -22,8 +22,10 @@ import cats.implicits._
 
 import com.snowplowanalytics.refererparser._
 
+import com.snowplowanalytics.iglu.client.ClientError.ValidationError
 import com.snowplowanalytics.iglu.client.IgluCirceClient
 import com.snowplowanalytics.iglu.client.resolver.registries.RegistryLookup
+import com.snowplowanalytics.iglu.client.validator.{ValidatorError, ValidatorReport}
 
 import com.snowplowanalytics.iglu.core.SelfDescribingData
 import com.snowplowanalytics.iglu.core.circe.implicits._
@@ -127,7 +129,9 @@ object EnrichmentManager {
     registryLookup: RegistryLookup[F]
   ): IorT[F, BadRow, IgluUtils.EventExtractResult] = {
     val iorT = for {
-      _ <- IorT.fromIor[F](setupEnrichedEvent(raw, enrichedEvent, etlTstamp, processor))
+      _ <- IorT
+             .fromIor[F](setupEnrichedEvent(raw, enrichedEvent, etlTstamp, processor))
+             .leftMap(NonEmptyList.one)
       extract <- IgluUtils.extractAndValidateInputJsons(enrichedEvent, client, registryLookup)
     } yield extract
 
@@ -331,7 +335,7 @@ object EnrichmentManager {
     e: EnrichedEvent,
     etlTstamp: DateTime,
     processor: Processor
-  ): Ior[NonEmptyList[FailureDetails.SchemaViolation], EnrichedEvent] = {
+  ): Ior[FailureDetails.SchemaViolation, EnrichedEvent] = {
     e.event_id = EE.generateEventId() // May be updated later if we have an `eid` parameter
     e.v_collector = raw.source.name // May be updated later if we have a `cv` parameter
     e.v_etl = ME.etlVersion(processor)
@@ -348,11 +352,13 @@ object EnrichmentManager {
     // Map/validate/transform input fields to enriched event fields
     val transformed = Transform.transform(raw, e)
 
-    (collectorTstamp |+| transformed).toIor
+    (collectorTstamp |+| transformed)
+      .leftMap(atomicErrorsToSchemaViolation)
+      .toIor
       .putRight(e)
   }
 
-  def setCollectorTstamp(event: EnrichedEvent, timestamp: Option[DateTime]): Either[FailureDetails.SchemaViolation, Unit] =
+  def setCollectorTstamp(event: EnrichedEvent, timestamp: Option[DateTime]): Either[AtomicError, Unit] =
     EE.formatCollectorTstamp(timestamp).map { t =>
       event.collector_tstamp = t
       ().asRight
@@ -835,7 +841,20 @@ object EnrichmentManager {
         }
     }
 
-  def buildSchemaViolationsBadRow(
+  private def atomicErrorsToSchemaViolation(errors: NonEmptyList[AtomicError]): FailureDetails.SchemaViolation = {
+    val messages = errors.map { error =>
+      ValidatorReport(error.message, Some(error.field), Nil, error.value)
+    }
+    val validatorError = ValidatorError.InvalidData(messages)
+    val clientError = ValidationError(validatorError, None)
+
+    FailureDetails.SchemaViolation.IgluError(
+      AtomicFields.atomicSchema,
+      clientError
+    )
+  }
+
+  private def buildSchemaViolationsBadRow(
     vs: NonEmptyList[FailureDetails.SchemaViolation],
     pee: Payload.PartiallyEnrichedEvent,
     re: Payload.RawEvent,
@@ -847,7 +866,7 @@ object EnrichmentManager {
       Payload.EnrichmentPayload(pee, re)
     )
 
-  def buildEnrichmentFailuresBadRow(
+  private def buildEnrichmentFailuresBadRow(
     fs: NonEmptyList[FailureDetails.EnrichmentFailure],
     pee: Payload.PartiallyEnrichedEvent,
     re: Payload.RawEvent,

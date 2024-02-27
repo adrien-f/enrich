@@ -45,7 +45,7 @@ import com.snowplowanalytics.iglu.core.{SchemaKey, SchemaVer, SelfDescribingData
 import com.snowplowanalytics.snowplow.badrows.{FailureDetails, Processor}
 
 import com.snowplowanalytics.snowplow.enrich.common.outputs.EnrichedEvent
-import com.snowplowanalytics.snowplow.enrich.common.enrichments.MiscEnrichments
+import com.snowplowanalytics.snowplow.enrich.common.enrichments.{AtomicError, MiscEnrichments}
 import com.snowplowanalytics.snowplow.enrich.common.QueryStringParameters
 
 /** General-purpose utils to help the ETL process along. */
@@ -158,16 +158,13 @@ object ConversionUtils {
    * @param str The String hopefully containing a UUID
    * @return either the original String, or an error String
    */
-  val validateUuid: (String, String) => Either[FailureDetails.SchemaViolation, String] =
+  val validateUuid: (String, String) => Either[AtomicError, String] =
     (field, str) => {
       def check(s: String)(u: UUID): Boolean = u != null && s.toLowerCase == u.toString
       val uuid = Try(UUID.fromString(str)).toOption.filter(check(str))
       uuid match {
         case Some(_) => str.toLowerCase.asRight
-        case None =>
-          FailureDetails.SchemaViolation
-            .NotJson(field, Option(str), "not a valid UUID")
-            .asLeft
+        case None => AtomicError(field, Option(str), "not a valid UUID").asLeft
       }
     }
 
@@ -176,13 +173,12 @@ object ConversionUtils {
    * @param str The String hopefully parseable as an integer
    * @return either the original String, or an error String
    */
-  val validateInteger: (String, String) => Either[FailureDetails.SchemaViolation, String] =
+  val validateInteger: (String, String) => Either[AtomicError, String] =
     (field, str) => {
       Either
         .catchNonFatal { str.toInt; str }
         .leftMap { _ =>
-          FailureDetails.SchemaViolation
-            .NotJson(field, Option(str), "not a valid integer")
+          AtomicError(field, Option(str), "not a valid integer")
         }
     }
 
@@ -327,11 +323,10 @@ object ConversionUtils {
         }
     }
 
-  val stringToJInteger2: (String, String) => Either[FailureDetails.SchemaViolation, JInteger] =
+  val stringToJInteger2: (String, String) => Either[AtomicError, JInteger] =
     (field, str) =>
       stringToJInteger(str).leftMap { e =>
-        FailureDetails.SchemaViolation
-          .NotJson(field, Option(str), e)
+        AtomicError(field, Option(str), e)
       }
 
   val stringToJBigDecimal: String => Either[String, JBigDecimal] = str =>
@@ -353,11 +348,10 @@ object ConversionUtils {
           .leftMap(e => s"cannot be converted to java.math.BigDecimal. Error : ${e.getMessage}")
     }
 
-  val stringToJBigDecimal2: (String, String) => Either[FailureDetails.SchemaViolation, JBigDecimal] =
+  val stringToJBigDecimal2: (String, String) => Either[AtomicError, JBigDecimal] =
     (field, str) =>
       stringToJBigDecimal(str).leftMap { e =>
-        FailureDetails.SchemaViolation
-          .NotJson(field, Option(str), e)
+        AtomicError(field, Option(str), e)
       }
 
   /**
@@ -369,7 +363,7 @@ object ConversionUtils {
    * @param field The name of the field we are validating. To use in our error message
    * @return either a failure or a String
    */
-  val stringToDoubleLike: (String, String) => Either[FailureDetails.SchemaViolation, String] =
+  val stringToDoubleLike: (String, String) => Either[AtomicError, String] =
     (field, str) =>
       Either
         .catchNonFatal {
@@ -383,8 +377,7 @@ object ConversionUtils {
         }
         .leftMap { _ =>
           val msg = "cannot be converted to Double-like"
-          FailureDetails.SchemaViolation
-            .NotJson(field, Option(str), msg)
+          AtomicError(field, Option(str), msg)
         }
 
   /**
@@ -393,7 +386,7 @@ object ConversionUtils {
    * @param field The name of the field we are validating. To use in our error message
    * @return a Scalaz Validation, being either a Failure String or a Success Double
    */
-  def stringToMaybeDouble(field: String, str: String): Either[FailureDetails.SchemaViolation, Option[Double]] =
+  def stringToMaybeDouble(field: String, str: String): Either[AtomicError, Option[Double]] =
     Either
       .catchNonFatal {
         if (Option(str).isEmpty || str == "null")
@@ -404,21 +397,15 @@ object ConversionUtils {
           jbigdec.doubleValue().some
         }
       }
-      .leftMap(_ =>
-        FailureDetails.SchemaViolation
-          .NotJson(field, Option(str), "cannot be converted to Double")
-      )
+      .leftMap(_ => AtomicError(field, Option(str), "cannot be converted to Double"))
 
   /** Convert a java BigDecimal a Double */
-  def jBigDecimalToDouble(field: String, f: JBigDecimal): Either[FailureDetails.SchemaViolation, Option[Double]] =
+  def jBigDecimalToDouble(field: String, f: JBigDecimal): Either[AtomicError, Option[Double]] =
     Either
       .catchNonFatal {
         Option(f).map(_.doubleValue)
       }
-      .leftMap(_ =>
-        FailureDetails.SchemaViolation
-          .NotJson(field, Option(f).map(_.toString), "cannot be converted to Double")
-      )
+      .leftMap(_ => AtomicError(field, Option(f).map(_.toString), "cannot be converted to Double"))
 
   /** Convert a java BigDecimal a Double */
   def jBigDecimalToDouble(
@@ -442,15 +429,12 @@ object ConversionUtils {
       )
 
   /** Convert a Double to a java BigDecimal */
-  def doubleToJBigDecimal(field: String, d: Option[Double]): Either[FailureDetails.SchemaViolation, Option[JBigDecimal]] =
+  def doubleToJBigDecimal(field: String, d: Option[Double]): Either[AtomicError, Option[JBigDecimal]] =
     Either
       .catchNonFatal {
         d.map(dd => new JBigDecimal(dd))
       }
-      .leftMap(_ =>
-        FailureDetails.SchemaViolation
-          .NotJson(field, d.map(_.toString), "cannot be converted to java BigDecimal")
-      )
+      .leftMap(_ => AtomicError(field, d.map(_.toString), "cannot be converted to java BigDecimal"))
 
   /**
    * Converts a String to a Double with two decimal places. Used to honor schemas with
@@ -478,16 +462,14 @@ object ConversionUtils {
    * @param field The name of the field we are trying to process. To use in our error message
    * @return either a Failure String or a Success Byte
    */
-  val stringToBooleanLikeJByte: (String, String) => Either[FailureDetails.SchemaViolation, JByte] =
+  val stringToBooleanLikeJByte: (String, String) => Either[AtomicError, JByte] =
     (field, str) =>
       str match {
         case "1" => (1.toByte: JByte).asRight
         case "0" => (0.toByte: JByte).asRight
         case _ =>
           val msg = "cannot be converted to Boolean-like java.lang.Byte"
-          FailureDetails.SchemaViolation
-            .NotJson(field, Option(str), msg)
-            .asLeft
+          AtomicError(field, Option(str), msg).asLeft
       }
 
   /**

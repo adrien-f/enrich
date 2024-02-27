@@ -10,12 +10,16 @@
  */
 package com.snowplowanalytics.snowplow.enrich.common.enrichments
 
+import com.snowplowanalytics.iglu.core.{SchemaKey, SchemaVer}
+
 import com.snowplowanalytics.snowplow.enrich.common.enrichments.AtomicFields.LimitedAtomicField
 import com.snowplowanalytics.snowplow.enrich.common.outputs.EnrichedEvent
 
 final case class AtomicFields(value: List[LimitedAtomicField])
 
 object AtomicFields {
+
+  val atomicSchema = SchemaKey("com.snowplowanalytics.snowplow", "atomic", "jsonschema", SchemaVer.Full(1, 0, 0))
 
   final case class AtomicField(
     name: String,
@@ -122,3 +126,9 @@ object AtomicFields {
     AtomicFields(withLimits)
   }
 }
+
+case class AtomicError(
+  field: String,
+  value: Option[String],
+  message: String
+)

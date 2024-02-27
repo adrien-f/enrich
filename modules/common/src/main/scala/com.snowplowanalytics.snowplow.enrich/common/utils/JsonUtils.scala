@@ -20,7 +20,7 @@ import io.circe.Json
 import org.joda.time.{DateTime, DateTimeZone}
 import org.joda.time.format.{DateTimeFormat, DateTimeFormatter}
 
-import com.snowplowanalytics.snowplow.badrows.FailureDetails
+import com.snowplowanalytics.snowplow.enrich.common.enrichments.AtomicError
 
 /** Contains general purpose extractors and other utilities for JSONs. Jackson-based. */
 object JsonUtils {
@@ -31,16 +31,15 @@ object JsonUtils {
   private val JsonSchemaDateTimeFormat =
     DateTimeFormat.forPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(DateTimeZone.UTC)
 
-  val extractUnencJson: (String, String) => Either[FailureDetails.SchemaViolation, String] =
+  val extractUnencJson: (String, String) => Either[AtomicError, String] =
     (_, str) => Right(str)
 
-  val extractBase64EncJson: (String, String) => Either[FailureDetails.SchemaViolation, String] =
+  val extractBase64EncJson: (String, String) => Either[AtomicError, String] =
     (field, str) =>
       ConversionUtils
         .decodeBase64Url(str)
         .leftMap { e =>
-          FailureDetails.SchemaViolation
-            .NotJson(field, Option(str), e)
+          AtomicError(field, Option(str), e)
         }
 
   /**
